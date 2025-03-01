@@ -2,8 +2,8 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-// API Keys and Configuration (Hardcoded)
-const TELEGRAM_TOKEN = '7578515018:AAFeie8YcRj29GanompWNky_1z27HzA1bbc';
+// API Keys and Configuration
+const TELEGRAM_TOKEN = '7741465512:AAGzBMSPa5McuO12TgLkxH-HWfbFRTbkAWM'; // Updated token
 const TMDB_API_KEY = 'ecaa26b48cd983adcac1b1087aebee94';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const BASE_URL_1337X = 'https://1337x.to';
@@ -14,18 +14,21 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 // In-memory cache and user selections
 let cache = {};
-let userSelections = {}; // Store last selected media per user
+let userSelections = {};
 
-// Handle /start command with two buttons
+// Handle /start command with main menu
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
 
   const keyboardOptions = [
     [{ text: '📥 Scrape Torrents from 1337x', callback_data: 'scrape_1337x' }],
     [{ text: '📺 Scrape Anime from wcofun.net', callback_data: 'scrape_wcofun' }],
+    [{ text: '🏴‍☠️ Anime Sources', callback_data: 'anime_sources' }],
+    [{ text: '🏴‍☠️ Cartoon Sources', callback_data: 'cartoon_sources' }],
+    [{ text: '🏴‍☠️ Movie/Series Sources', callback_data: 'movie_series_sources' }],
   ];
 
-  bot.sendMessage(chatId, 'Choose an option to scrape trending content:', {
+  bot.sendMessage(chatId, 'Choose an option to scrape or explore sources:', {
     reply_markup: { inline_keyboard: keyboardOptions },
   });
 });
@@ -37,7 +40,70 @@ bot.on('callback_query', async (callbackQuery) => {
   const data = callbackQuery.data;
 
   try {
-    if (data === 'scrape_1337x') {
+    if (data === 'noop') {
+      bot.answerCallbackQuery(callbackQuery.id);
+      return;
+    }
+
+    // Show anime sources
+    if (data === 'anime_sources') {
+      const animeSourcesOptions = [
+        [{ text: 'AnimeKai', url: 'https://animekai.to/home' }],
+        [{ text: 'AnimePahe', url: 'https://animepahe.ru/' }],
+        [{ text: 'HiAnime', url: 'https://hianime.tv/' }],
+        [{ text: 'AnimeZ', url: 'https://animez.org/' }],
+        [{ text: 'WCOStream', url: 'https://www.wcostream.tv/' }],
+        [{ text: '9anime', url: 'https://9anime.to/' }],
+        [{ text: 'Animesuge', url: 'https://animesuge.to/' }],
+        [{ text: 'Animeonsen', url: 'https://animeonsen.xyz/' }],
+        [{ text: 'Back', callback_data: 'back_to_start' }],
+      ];
+      bot.sendMessage(chatId, '🏴‍☠️ Anime Sources:', {
+        reply_markup: { inline_keyboard: animeSourcesOptions },
+      });
+    }
+    // Show cartoon sources
+    else if (data === 'cartoon_sources') {
+      const cartoonSourcesOptions = [
+        [{ text: 'Kimcartoon', url: 'https://kimcartoon.li/' }],
+        [{ text: 'WCOFun', url: 'https://www.wcofun.net/' }],
+        [{ text: 'Steven Universe Cartoons', url: 'https://stevenuniverse.best/cartoons/' }],
+        [{ text: 'Back', callback_data: 'back_to_start' }],
+      ];
+      bot.sendMessage(chatId, '🏴‍☠️ Cartoon Sources:', {
+        reply_markup: { inline_keyboard: cartoonSourcesOptions },
+      });
+    }
+    // Show movie/series sources
+    else if (data === 'movie_series_sources') {
+      const movieSeriesSourcesOptions = [
+        [{ text: '1337x', url: 'https://1337x.to/home/' }],
+        [{ text: 'SFlix', url: 'https://sflix.to/' }],
+        [{ text: 'Soap2Day', url: 'https://ww25.soap2day.day/' }],
+        [{ text: '123Movies', url: 'https://ww4.123moviesfree.net/' }],
+        [{ text: 'YTS', url: 'https://yts.mx/' }],
+        [{ text: 'RARBG', url: 'https://rarbg.to/' }],
+        [{ text: 'Back', callback_data: 'back_to_start' }],
+      ];
+      bot.sendMessage(chatId, '🏴‍☠️ Movie/Series Sources:', {
+        reply_markup: { inline_keyboard: movieSeriesSourcesOptions },
+      });
+    }
+    // Back to start menu
+    else if (data === 'back_to_start') {
+      const keyboardOptions = [
+        [{ text: '📥 Scrape Torrents from 1337x', callback_data: 'scrape_1337x' }],
+        [{ text: '📺 Scrape Anime from wcofun.net', callback_data: 'scrape_wcofun' }],
+        [{ text: '🏴‍☠️ Anime Sources', callback_data: 'anime_sources' }],
+        [{ text: '🏴‍☠️ Cartoon Sources', callback_data: 'cartoon_sources' }],
+        [{ text: '🏴‍☠️ Movie/Series Sources', callback_data: 'movie_series_sources' }],
+      ];
+      bot.sendMessage(chatId, 'Choose an option to scrape or explore sources:', {
+        reply_markup: { inline_keyboard: keyboardOptions },
+      });
+    }
+    // Scrape 1337x
+    else if (data === 'scrape_1337x') {
       const [trendingMovies, trendingShows] = await Promise.all([getTrendingMovies(), getTrendingShows()]);
       if (trendingMovies.length === 0 && trendingShows.length === 0) {
         bot.sendMessage(chatId, 'Oops! I couldn’t fetch trending movies or shows for 1337x.');
@@ -58,7 +124,9 @@ bot.on('callback_query', async (callbackQuery) => {
       bot.sendMessage(chatId, 'Select a trending movie or show to scrape from 1337x:', {
         reply_markup: { inline_keyboard: keyboardOptions },
       });
-    } else if (data === 'scrape_wcofun') {
+    }
+    // Scrape wcofun.net
+    else if (data === 'scrape_wcofun') {
       const trendingAnime = await getTrendingAnime();
       if (trendingAnime.length === 0) {
         bot.sendMessage(chatId, 'Oops! I couldn’t fetch trending anime for wcofun.net.');
@@ -74,13 +142,15 @@ bot.on('callback_query', async (callbackQuery) => {
       bot.sendMessage(chatId, 'Select a trending anime to scrape from wcofun.net:', {
         reply_markup: { inline_keyboard: keyboardOptions },
       });
-    } else if (data === 'search_1337x' || data === 'search_wcofun') {
+    }
+    // Search prompts
+    else if (data === 'search_1337x' || data === 'search_wcofun') {
       bot.sendMessage(chatId, `Please type the name of a ${data === 'search_1337x' ? 'movie/show' : 'anime'} to search:`, {
         reply_markup: { force_reply: true },
       });
-    } else if (data === 'noop') {
-      // Do nothing
-    } else {
+    }
+    // Handle scraping selections
+    else {
       const [type, id, source] = data.split('_');
       const media = await getMediaDetails(type, id);
       if (media) {
