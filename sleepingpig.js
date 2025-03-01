@@ -2,7 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 
 // API Keys (replace with your actual keys)
-const TELEGRAM_TOKEN = '7578515018:AAFeie8YcRj29GanompWNky_1z27HzA1bbc';
+const TELEGRAM_TOKEN = '7741465512:AAGzBMSPa5McuO12TgLkxH-HWfbFRTbkAWM';
 const TMDB_API_KEY = 'ecaa26b48cd983adcac1b1087aebee94';
 
 // Initialize Telegram Bot
