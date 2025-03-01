@@ -2,9 +2,9 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-// API Keys and Configuration
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
+// API Keys and Configuration (Hardcoded)
+const TELEGRAM_TOKEN = '7578515018:AAFeie8YcRj29GanompWNky_1z27HzA1bbc';
+const TMDB_API_KEY = 'ecaa26b48cd983adcac1b1087aebee94';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const BASE_URL_1337X = 'https://1337x.to';
 const BASE_URL_WCOFUN = 'https://www.wcofun.net';
