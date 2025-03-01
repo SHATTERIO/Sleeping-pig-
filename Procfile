@@ -1,1 +1,1 @@
-worker: node sleepingpig.js
+worker: node index.js
