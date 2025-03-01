@@ -1,235 +1,360 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const cheerio = require('cheerio');
 
-// API Keys (replace with your actual keys)
-const TELEGRAM_TOKEN = '7741465512:AAGzBMSPa5McuO12TgLkxH-HWfbFRTbkAWM';
-const TMDB_API_KEY = 'ecaa26b48cd983adcac1b1087aebee94';
+// API Keys and Configuration
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TMDB_API_KEY = process.env.TMDB_API_KEY;
+const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+const BASE_URL_1337X = 'https://1337x.to';
+const BASE_URL_WCOFUN = 'https://www.wcofun.net';
 
-// Initialize Telegram Bot
+// Initialize bot
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// TMDB API Base URL
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+// In-memory cache and user selections
+let cache = {};
+let userSelections = {}; // Store last selected media per user
 
-// Function to fetch top 5 trending movies
+// Handle /start command with two buttons
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+
+  const keyboardOptions = [
+    [{ text: '📥 Scrape Torrents from 1337x', callback_data: 'scrape_1337x' }],
+    [{ text: '📺 Scrape Anime from wcofun.net', callback_data: 'scrape_wcofun' }],
+  ];
+
+  bot.sendMessage(chatId, 'Choose an option to scrape trending content:', {
+    reply_markup: { inline_keyboard: keyboardOptions },
+  });
+});
+
+// Handle callback queries
+bot.on('callback_query', async (callbackQuery) => {
+  const chatId = callbackQuery.message.chat.id;
+  const userId = callbackQuery.from.id;
+  const data = callbackQuery.data;
+
+  try {
+    if (data === 'scrape_1337x') {
+      const [trendingMovies, trendingShows] = await Promise.all([getTrendingMovies(), getTrendingShows()]);
+      if (trendingMovies.length === 0 && trendingShows.length === 0) {
+        bot.sendMessage(chatId, 'Oops! I couldn’t fetch trending movies or shows for 1337x.');
+        return;
+      }
+
+      const keyboardOptions = [];
+      if (trendingMovies.length) {
+        keyboardOptions.push([{ text: '🎬 Trending Movies:', callback_data: 'noop' }]);
+        keyboardOptions.push(...trendingMovies.map((movie) => [{ text: movie.title, callback_data: `movie_${movie.id}_1337x` }]));
+      }
+      if (trendingShows.length) {
+        keyboardOptions.push([{ text: '📺 Trending TV Shows:', callback_data: 'noop' }]);
+        keyboardOptions.push(...trendingShows.map((show) => [{ text: show.name, callback_data: `tv_${show.id}_1337x` }]));
+      }
+      keyboardOptions.push([{ text: '🔍 Search 1337x', callback_data: 'search_1337x' }]);
+
+      bot.sendMessage(chatId, 'Select a trending movie or show to scrape from 1337x:', {
+        reply_markup: { inline_keyboard: keyboardOptions },
+      });
+    } else if (data === 'scrape_wcofun') {
+      const trendingAnime = await getTrendingAnime();
+      if (trendingAnime.length === 0) {
+        bot.sendMessage(chatId, 'Oops! I couldn’t fetch trending anime for wcofun.net.');
+        return;
+      }
+
+      const keyboardOptions = [
+        [{ text: '📺 Trending Anime:', callback_data: 'noop' }],
+        ...trendingAnime.map((anime) => [{ text: anime.name, callback_data: `tv_${anime.id}_wcofun` }]),
+        [{ text: '🔍 Search wcofun.net', callback_data: 'search_wcofun' }],
+      ];
+
+      bot.sendMessage(chatId, 'Select a trending anime to scrape from wcofun.net:', {
+        reply_markup: { inline_keyboard: keyboardOptions },
+      });
+    } else if (data === 'search_1337x' || data === 'search_wcofun') {
+      bot.sendMessage(chatId, `Please type the name of a ${data === 'search_1337x' ? 'movie/show' : 'anime'} to search:`, {
+        reply_markup: { force_reply: true },
+      });
+    } else if (data === 'noop') {
+      // Do nothing
+    } else {
+      const [type, id, source] = data.split('_');
+      const media = await getMediaDetails(type, id);
+      if (media) {
+        userSelections[userId] = { type, id, source };
+        if (source === '1337x') {
+          await send1337xDetails(chatId, media, type);
+        } else if (source === 'wcofun') {
+          await sendWCOFunDetails(chatId, media, type);
+        }
+      } else {
+        bot.sendMessage(chatId, `Sorry, I couldn’t fetch details for this ${type === 'movie' ? 'movie' : 'show'}.`);
+      }
+    }
+    bot.answerCallbackQuery(callbackQuery.id);
+  } catch (error) {
+    console.error('Callback error:', error);
+    bot.sendMessage(chatId, 'An error occurred while processing your request.');
+  }
+});
+
+// Handle manual search replies
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const text = msg.text;
+
+  if (text && text.startsWith('/')) return;
+
+  if (msg.reply_to_message && msg.reply_to_message.text.includes('Please type the name')) {
+    try {
+      if (!text || text.trim() === '') {
+        bot.sendMessage(chatId, 'Please provide a valid search term!');
+        return;
+      }
+
+      const is1337xSearch = msg.reply_to_message.text.includes('movie/show');
+      const results = is1337xSearch ? await searchMedia(text) : await searchAnime(text);
+      if (!results) {
+        bot.sendMessage(chatId, `Sorry, I couldn’t find anything for "${text}". Check the spelling or try another name!`);
+        return;
+      }
+
+      if (results.length === 1) {
+        userSelections[userId] = { type: results[0].type, id: results[0].data.id, source: is1337xSearch ? '1337x' : 'wcofun' };
+        if (is1337xSearch) {
+          await send1337xDetails(chatId, results[0].data, results[0].type);
+        } else {
+          await sendWCOFunDetails(chatId, results[0].data, results[0].type);
+        }
+      } else {
+        const keyboardOptions = results.map((result) => [
+          {
+            text: formatMediaPreview(result.data, result.type),
+            callback_data: `${result.type}_${result.data.id}_${is1337xSearch ? '1337x' : 'wcofun'}`,
+          },
+        ]);
+        bot.sendMessage(chatId, `Found multiple matches for "${text}". Select one:`, {
+          reply_markup: { inline_keyboard: keyboardOptions },
+        });
+      }
+    } catch (error) {
+      console.error('Search handler error:', error);
+      bot.sendMessage(chatId, 'Something went wrong while searching.');
+    }
+  }
+});
+
+// Fetch trending movies (for 1337x)
 async function getTrendingMovies() {
   try {
-    const response = await axios.get(`${TMDB_BASE_URL}/trending/movie/day`, {
-      params: { api_key: TMDB_API_KEY },
-    });
+    const response = await axios.get(`${TMDB_BASE_URL}/trending/movie/day`, { params: { api_key: TMDB_API_KEY } });
     return response.data.results.slice(0, 5);
   } catch (error) {
-    console.error('Error fetching trending movies:', error);
+    console.error('Error fetching trending movies:', error.message);
     return [];
   }
 }
 
-// Function to fetch top 5 trending TV shows
+// Fetch trending shows (for 1337x)
 async function getTrendingShows() {
   try {
-    const response = await axios.get(`${TMDB_BASE_URL}/trending/tv/day`, {
-      params: { api_key: TMDB_API_KEY },
-    });
+    const response = await axios.get(`${TMDB_BASE_URL}/trending/tv/day`, { params: { api_key: TMDB_API_KEY } });
     return response.data.results.slice(0, 5);
   } catch (error) {
-    console.error('Error fetching trending shows:', error);
+    console.error('Error fetching trending shows:', error.message);
     return [];
   }
 }
 
-// Function to search for a movie or show by name (return all matches)
+// Fetch trending anime (for wcofun.net)
+async function getTrendingAnime() {
+  try {
+    const response = await axios.get(`${TMDB_BASE_URL}/trending/tv/day`, { params: { api_key: TMDB_API_KEY } });
+    return response.data.results.filter((show) => show.origin_country.includes('JP')).slice(0, 5);
+  } catch (error) {
+    console.error('Error fetching trending anime:', error.message);
+    return [];
+  }
+}
+
+// Search TMDB for movies and shows (for 1337x)
 async function searchMedia(query) {
   try {
     const results = [];
-    const movieResponse = await axios.get(`${TMDB_BASE_URL}/search/movie`, {
-      params: { api_key: TMDB_API_KEY, query },
-    });
+    const movieResponse = await axios.get(`${TMDB_BASE_URL}/search/movie`, { params: { api_key: TMDB_API_KEY, query } });
     if (movieResponse.data.results.length > 0) {
-      results.push(...movieResponse.data.results.map(data => ({ type: 'movie', data })));
+      results.push(...movieResponse.data.results.map((data) => ({ type: 'movie', data })));
     }
-    const tvResponse = await axios.get(`${TMDB_BASE_URL}/search/tv`, {
-      params: { api_key: TMDB_API_KEY, query },
-    });
+    const tvResponse = await axios.get(`${TMDB_BASE_URL}/search/tv`, { params: { api_key: TMDB_API_KEY, query } });
     if (tvResponse.data.results.length > 0) {
-      results.push(...tvResponse.data.results.map(data => ({ type: 'tv', data })));
+      results.push(...tvResponse.data.results.map((data) => ({ type: 'tv', data })));
     }
     return results.length > 0 ? results : null;
   } catch (error) {
-    console.error('Error searching media:', error);
+    console.error('Error searching media:', error.message);
     return null;
   }
 }
 
-// Function to fetch details for a movie or show by ID
+// Search TMDB for anime (for wcofun.net)
+async function searchAnime(query) {
+  try {
+    const response = await axios.get(`${TMDB_BASE_URL}/search/tv`, { params: { api_key: TMDB_API_KEY, query } });
+    const results = response.data.results
+      .filter((show) => show.origin_country.includes('JP'))
+      .map((data) => ({ type: 'tv', data }));
+    return results.length > 0 ? results : null;
+  } catch (error) {
+    console.error('Error searching anime:', error.message);
+    return null;
+  }
+}
+
+// Fetch detailed media info from TMDB
 async function getMediaDetails(type, id) {
   try {
-    const response = await axios.get(`${TMDB_BASE_URL}/${type}/${id}`, {
-      params: { api_key: TMDB_API_KEY },
-    });
+    const response = await axios.get(`${TMDB_BASE_URL}/${type}/${id}`, { params: { api_key: TMDB_API_KEY } });
     return response.data;
   } catch (error) {
-    console.error(`Error fetching ${type} details:`, error);
+    console.error(`Error fetching ${type} details for ID ${id}:`, error.message);
     return null;
   }
 }
 
-// Function to fetch episode details for a series (TV or anime)
-async function getEpisodes(tvId, seasonNumber = 1) {
+// Scrape 1337x for torrents
+async function scrape1337x(query) {
+  const searchUrl = `${BASE_URL_1337X}/search/${encodeURIComponent(query)}/1/`;
   try {
-    const response = await axios.get(`${TMDB_BASE_URL}/tv/${tvId}/season/${seasonNumber}`, {
-      params: { api_key: TMDB_API_KEY },
+    const searchResponse = await axios.get(searchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 10000,
     });
-    return response.data.episodes;
+    const $ = cheerio.load(searchResponse.data);
+    const results = [];
+
+    $('table.table-list tbody tr').each((_, element) => {
+      const name = $(element).find('td.name a:nth-child(2)').text().trim();
+      const link = $(element).find('td.name a:nth-child(2)').attr('href');
+      const seeds = parseInt($(element).find('td.seeds').text().trim()) || 0;
+      const size = $(element).find('td.size').text().trim().split(' ')[0] + ' ' + ($(element).find('td.size').text().trim().split(' ')[1] || 'GB');
+
+      if (name && link) {
+        results.push({ name, link, seeds, size, quality: extractQuality(name) });
+      }
+    });
+
+    if (results.length === 0) return null;
+    results.sort((a, b) => b.seeds - a.seeds);
+    const bestTorrent = results[0];
+
+    const torrentPageUrl = `${BASE_URL_1337X}${bestTorrent.link}`;
+    const torrentPageResponse = await axios.get(torrentPageUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 10000,
+    });
+    const $$ = cheerio.load(torrentPageResponse.data);
+    const magnetLink = $$('a[href^="magnet:"]').first().attr('href');
+
+    return magnetLink ? { ...bestTorrent, magnetLink } : bestTorrent;
   } catch (error) {
-    console.error('Error fetching episodes:', error);
-    return [];
+    console.error('1337x scraping error:', error.message);
+    return null;
   }
 }
 
-// Function to generate 1337x search URL
-async function getDownloadableContent(type, id, title, seasonNumber = null, episodeNumber = null) {
+// Scrape wcofun.net for anime links
+async function scrapeWCOFun(query) {
   try {
-    let query = type === 'movie' 
-      ? title 
-      : `${title} S${String(seasonNumber || 1).padStart(2, '0')}E${String(episodeNumber || 1).padStart(2, '0')}`;
-    const searchUrl = `https://1337x.to/search/${encodeURIComponent(query)}/1/`;
-
-    if (type === 'movie') {
-      return [{ name: `${title} (Full Movie)`, url: searchUrl }];
-    } else if (type === 'tv') {
-      const episodes = await getEpisodes(id, seasonNumber || 1);
-      if (episodes.length === 0) return [];
-      return episodes.map(ep => ({
-        name: `S${String(seasonNumber || 1).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')} - ${ep.name}`,
-        url: `https://1337x.to/search/${encodeURIComponent(`${title} S${seasonNumber || 1}E${ep.episode_number}`)}/1/`
-      }));
-    }
-    return [];
-  } catch (error) {
-    console.error('Error generating 1337x URL:', error);
-    return [];
-  }
-}
-
-// Function to format media details with 1337x links
-async function formatMediaDetails(media, type) {
-  const title = type === 'movie' ? media.title : media.name;
-  const releaseDate = type === 'movie' ? media.release_date : media.first_air_date;
-  let message = `${type === 'movie' ? '🎬' : '📺'} *${title}* (${type === 'movie' ? 'Movie' : 'TV Show'})\n` +
-                `📅 Release Date: ${releaseDate || 'N/A'}\n` +
-                `⭐ Rating: ${media.vote_average || 'N/A'} / 10\n` +
-                `📝 Overview: ${media.overview || 'No description available.'}\n\n`;
-
-  const content = await getDownloadableContent(type, media.id, title);
-  if (content.length > 0) {
-    message += '*Available on 1337x:*\n';
-    content.forEach(item => {
-      message += `[${item.name}](${item.url})\n`;
+    const response = await axios.get(BASE_URL_WCOFUN, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 10000,
     });
-  } else {
-    message += 'No 1337x search links available.\n';
-  }
+    const $ = cheerio.load(response.data);
+    const results = [];
 
-  return message;
+    $('a').each((_, element) => {
+      const title = $(element).text().trim();
+      const link = $(element).attr('href');
+      if (title && link && title.toLowerCase().includes(query.toLowerCase())) {
+        results.push({ title, link: link.startsWith('http') ? link : `${BASE_URL_WCOFUN}${link}` });
+      }
+    });
+
+    return results.length > 0 ? results[0] : null;
+  } catch (error) {
+    console.error('wcofun.net scraping error:', error.message);
+    return null;
+  }
 }
 
-// Function to format a short preview for selection
+// Helper to extract quality from torrent name
+function extractQuality(name) {
+  const qualityPatterns = ['4k', '1080p', '720p', '480p', '360p', 'hdr', 'bluray', 'web-dl', 'hdtv'];
+  for (const quality of qualityPatterns) {
+    if (name.toLowerCase().includes(quality)) return quality.toUpperCase();
+  }
+  return 'Unknown';
+}
+
+// Format preview for selection
 function formatMediaPreview(media, type) {
   const title = type === 'movie' ? media.title : media.name;
   const releaseDate = type === 'movie' ? media.release_date : media.first_air_date;
   return `${type === 'movie' ? '🎬' : '📺'} ${title} (${releaseDate ? releaseDate.slice(0, 4) : 'N/A'})`;
 }
 
-// Handle /start command
-bot.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
-  const [trendingMovies, trendingShows] = await Promise.all([getTrendingMovies(), getTrendingShows()]);
+// Send 1337x details with torrent links
+async function send1337xDetails(chatId, media, type) {
+  const title = type === 'movie' ? media.title : media.name;
+  const releaseDate = type === 'movie' ? media.release_date : media.first_air_date;
 
-  if (trendingMovies.length === 0 && trendingShows.length === 0) {
-    bot.sendMessage(chatId, 'Sorry, I couldn’t fetch trending media right now.');
-    return;
-  }
+  let message =
+    `<b>${type === 'movie' ? '🎬' : '📺'} ${title}</b>\n\n` +
+    `📅 Release: ${releaseDate || 'N/A'}\n\n` +
+    `⭐ Rating: ${media.vote_average || 'N/A'}/10\n\n` +
+    `📝 Overview: ${media.overview || 'No description available.'}\n`;
 
-  let message = 'Here are the top 5 trending movies and shows today:\n\n';
-  const keyboardOptions = [];
-
-  message += '*Movies:*\n';
-  trendingMovies.forEach((movie, index) => {
-    message += `${index + 1}. ${movie.title}\n`;
-    keyboardOptions.push({ text: `🎬 ${movie.title}`, callback_data: `movie_${movie.id}` });
-  });
-
-  message += '\n*TV Shows:*\n';
-  trendingShows.forEach((show, index) => {
-    message += `${index + 1}. ${show.name}\n`;
-    keyboardOptions.push({ text: `📺 ${show.name}`, callback_data: `tv_${show.id}` });
-  });
-
-  keyboardOptions.push({ text: '🔍 Search for a Movie or Show', callback_data: 'search' });
-
-  bot.sendMessage(chatId, message, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: keyboardOptions.map(option => [option]) },
-  });
-});
-
-// Handle callback queries (movie/show selection or search)
-bot.on('callback_query', async (callbackQuery) => {
-  const chatId = callbackQuery.message.chat.id;
-  const data = callbackQuery.data;
-
-  if (data === 'search') {
-    bot.sendMessage(chatId, 'Please type the name of a movie or show to search:', {
-      reply_markup: { force_reply: true },
-    });
+  const torrent = await scrape1337x(title);
+  if (torrent) {
+    message += `\nQuality: ${torrent.quality}\n` + `Size: ${torrent.size}\n` + `<a href="${BASE_URL_1337X}${torrent.link}">View on 1337x</a>`;
+    if (torrent.magnetLink) {
+      message += `\n<a href="${torrent.magnetLink}">Download Magnet</a>`;
+    }
   } else {
-    const [type, id] = data.split('_');
-    const media = await getMediaDetails(type, id);
-    if (media) {
-      const mediaDetails = await formatMediaDetails(media, type);
-      bot.sendMessage(chatId, mediaDetails, { parse_mode: 'Markdown' });
-    } else {
-      bot.sendMessage(chatId, `Sorry, I couldn’t fetch details for this ${type === 'movie' ? 'movie' : 'show'}.`);
-    }
+    message += `\nSorry, no torrents found for "${title}" on 1337x.`;
   }
 
-  bot.answerCallbackQuery(callbackQuery.id);
-});
+  bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+}
 
-// Handle replies to the search prompt
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text;
+// Send wcofun.net details with streaming links
+async function sendWCOFunDetails(chatId, media, type) {
+  const title = media.name;
+  const releaseDate = media.first_air_date;
 
-  if (text.startsWith('/')) return;
+  let message =
+    `<b>📺 ${title}</b>\n\n` +
+    `📅 Release: ${releaseDate || 'N/A'}\n\n` +
+    `⭐ Rating: ${media.vote_average || 'N/A'}/10\n\n` +
+    `📝 Overview: ${media.overview || 'No description available.'}\n`;
 
-  if (msg.reply_to_message && msg.reply_to_message.text === 'Please type the name of a movie or show to search:') {
-    const results = await searchMedia(text);
-    if (!results) {
-      bot.sendMessage(chatId, `Sorry, I couldn’t find a movie or show called "${text}". Try another name!`);
-      return;
-    }
-
-    if (results.length === 1) {
-      const mediaDetails = await formatMediaDetails(results[0].data, results[0].type);
-      bot.sendMessage(chatId, mediaDetails, { parse_mode: 'Markdown' });
-    } else {
-      let message = `Found multiple matches for "${text}". Please select one:\n\n`;
-      const keyboardOptions = results.map((result, index) => ({
-        text: formatMediaPreview(result.data, result.type),
-        callback_data: `${result.type}_${result.data.id}`,
-      }));
-
-      message += results
-        .map((result, index) => `${index + 1}. ${formatMediaPreview(result.data, result.type)}`)
-        .join('\n');
-
-      bot.sendMessage(chatId, message, {
-        reply_markup: { inline_keyboard: keyboardOptions.map(option => [option]) },
-      });
-    }
+  const animeLink = await scrapeWCOFun(title);
+  if (animeLink) {
+    message += `\n<a href="${animeLink.link}">Watch on wcofun.net</a>`;
+  } else {
+    message += `\nSorry, no streaming link found for "${title}" on wcofun.net.`;
   }
+
+  bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+}
+
+// Error handling for polling errors
+bot.on('polling_error', (error) => {
+  console.error('Polling error:', error);
 });
 
-// Log when the bot starts
 console.log('Bot is running...');
