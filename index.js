@@ -3,7 +3,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 // API Keys and Configuration
-const TELEGRAM_TOKEN = '7741465512:AAGzBMSPa5McuO12TgLkxH-HWfbFRTbkAWM'; // Updated token
+const TELEGRAM_TOKEN = '7741465512:AAGzBMSPa5McuO12TgLkxH-HWfbFRTbkAWM';
 const TMDB_API_KEY = 'ecaa26b48cd983adcac1b1087aebee94';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const BASE_URL_1337X = 'https://1337x.to';
@@ -336,7 +336,7 @@ async function scrape1337x(query) {
   }
 }
 
-// Scrape wcofun.net for anime links
+// Scrape wcofun.net for anime links and episodes
 async function scrapeWCOFun(query) {
   try {
     const response = await axios.get(BASE_URL_WCOFUN, {
@@ -354,7 +354,29 @@ async function scrapeWCOFun(query) {
       }
     });
 
-    return results.length > 0 ? results[0] : null;
+    if (results.length === 0) return null;
+    const animePage = results[0];
+
+    // Scrape episode links from the anime page
+    const animePageResponse = await axios.get(animePage.link, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 10000,
+    });
+    const $$ = cheerio.load(animePageResponse.data);
+    const episodeLinks = [];
+    
+    $$('.cat-eps a').each((_, element) => {
+      const epTitle = $$(element).text().trim();
+      const epLink = $$(element).attr('href');
+      if (epTitle && epLink) {
+        episodeLinks.push({
+          title: epTitle,
+          link: epLink.startsWith('http') ? epLink : `${BASE_URL_WCOFUN}${epLink}`,
+        });
+      }
+    });
+
+    return { ...animePage, episodes: episodeLinks.slice(0, 10) }; // Limit to 10 episodes for brevity
   } catch (error) {
     console.error('wcofun.net scraping error:', error.message);
     return null;
@@ -401,7 +423,7 @@ async function send1337xDetails(chatId, media, type) {
   bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
 }
 
-// Send wcofun.net details with streaming links
+// Send wcofun.net details with torrent links and episode buttons
 async function sendWCOFunDetails(chatId, media, type) {
   const title = media.name;
   const releaseDate = media.first_air_date;
@@ -412,14 +434,43 @@ async function sendWCOFunDetails(chatId, media, type) {
     `⭐ Rating: ${media.vote_average || 'N/A'}/10\n\n` +
     `📝 Overview: ${media.overview || 'No description available.'}\n`;
 
-  const animeLink = await scrapeWCOFun(title);
-  if (animeLink) {
-    message += `\n<a href="${animeLink.link}">Watch on wcofun.net</a>`;
+  // Scrape torrent from 1337x
+  const torrent = await scrape1337x(title);
+  if (torrent) {
+    message += `\n<b>Torrent Info:</b>\n` +
+      `Quality: ${torrent.quality}\n` +
+      `Size: ${torrent.size}\n` +
+      `<a href="${BASE_URL_1337X}${torrent.link}">View on 1337x</a>\n` +
+      (torrent.magnetLink ? `<a href="${torrent.magnetLink}">Download Magnet</a>\n` : '');
   } else {
-    message += `\nSorry, no streaming link found for "${title}" on wcofun.net.`;
+    message += `\nNo torrents found for "${title}" on 1337x.\n`;
   }
 
-  bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+  // Scrape wcofun.net for streaming link and episodes
+  const animeData = await scrapeWCOFun(title);
+  if (animeData) {
+    message += `\n<b>Streaming:</b>\n<a href="${animeData.link}">Watch on wcofun.net</a>\n`;
+
+    if (animeData.episodes && animeData.episodes.length > 0) {
+      message += `\n<b>Episodes:</b>\n`;
+      const episodeButtons = animeData.episodes.map((ep, index) => [
+        { text: `${ep.title}`, url: ep.link },
+      ]);
+      bot.sendMessage(chatId, message, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [[{ text: 'Show Episodes', callback_data: 'noop' }]] },
+      });
+      bot.sendMessage(chatId, 'Select an episode:', {
+        reply_markup: { inline_keyboard: episodeButtons },
+      });
+    } else {
+      message += `\nNo episodes found for "${title}" on wcofun.net.`;
+      bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+    }
+  } else {
+    message += `\nSorry, no streaming link found for "${title}" on wcofun.net.`;
+    bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+  }
 }
 
 // Error handling for polling errors
