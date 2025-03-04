@@ -8,6 +8,7 @@ const TMDB_API_KEY = 'ecaa26b48cd983adcac1b1087aebee94'; // Replace with your TM
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const BASE_URL_1337X = 'https://1337x.to';
 const BASE_URL_WCOFUN = 'https://www.wcofun.net';
+const BASE_URL_ANIMEPAHE = 'https://animepahe.ru';
 
 // Initialize bot
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
@@ -19,7 +20,7 @@ let userSelections = {};
 // Alternative anime sources
 const alternativeAnimeSources = [
   { name: 'AnimeKai', baseUrl: 'https://animekai.to' },
-  { name: 'AnimePahe', baseUrl: 'https://animepahe.ru' },
+  { name: 'AnimePahe', baseUrl: BASE_URL_ANIMEPAHE },
   { name: 'HiAnime', baseUrl: 'https://hianime.tv' },
 ];
 
@@ -29,6 +30,7 @@ bot.onText(/\/start/, async (msg) => {
   const keyboardOptions = [
     [{ text: '📥 Scrape Torrents from 1337x', callback_data: 'scrape_1337x' }],
     [{ text: '📺 Scrape Anime from wcofun.net', callback_data: 'scrape_wcofun' }],
+    [{ text: '📇 AnimePahe Index', callback_data: 'animepahe_index' }],
     [{ text: '🏴‍☠️ Anime Sources', callback_data: 'anime_sources' }],
     [{ text: '🏴‍☠️ Cartoon Sources', callback_data: 'cartoon_sources' }],
     [{ text: '🏴‍☠️ Movie/Series Sources', callback_data: 'movie_series_sources' }],
@@ -52,23 +54,14 @@ bot.on('callback_query', async (callbackQuery) => {
 
     // Handle main menu options
     if (data === 'scrape_1337x') {
-      bot.sendMessage(chatId, 'Enter the movie/series/game name to scrape from 1337x:');
-      bot.once('message', async (msg) => {
-        const torrents = await scrape1337x(msg.text);
-        const keyboard = torrents.slice(0, 5).map(t => [{ text: t.name, url: t.href }]);
-        bot.sendMessage(chatId, torrents.length > 0 ? 'Top torrents:' : 'No torrents found.', {
-          reply_markup: { inline_keyboard: keyboard },
-        });
-      });
+      bot.sendMessage(chatId, 'Enter the movie/series/game name to scrape from 1337x:', { reply_markup: { force_reply: true } });
     } else if (data === 'scrape_wcofun') {
-      bot.sendMessage(chatId, 'Enter the anime name to scrape from wcofun.net:');
-      bot.once('message', async (msg) => {
-        const results = await searchMedia(msg.text, 'tv');
-        cache['search_' + chatId] = results;
-        const keyboard = results.slice(0, 5).map(r => [{ text: r.data.name, callback_data: `tv_${r.data.id}_wcofun` }]);
-        bot.sendMessage(chatId, results.length > 0 ? 'Search results:' : 'No anime found.', {
-          reply_markup: { inline_keyboard: keyboard },
-        });
+      bot.sendMessage(chatId, 'Enter the anime name to scrape from wcofun.net:', { reply_markup: { force_reply: true } });
+    } else if (data === 'animepahe_index') {
+      const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+      const keyboard = letters.map(letter => [{ text: letter, callback_data: `index_${letter}` }]);
+      bot.sendMessage(chatId, 'Select a letter to browse AnimePahe index:', {
+        reply_markup: { inline_keyboard: keyboard },
       });
     } else if (data === 'anime_sources') {
       const sources = [
@@ -82,12 +75,57 @@ bot.on('callback_query', async (callbackQuery) => {
         { name: 'Animeonsen', url: 'https://animeonsen.xyz/' },
       ];
       const keyboard = sources.map(s => [{ text: s.name, url: s.url }]);
+      keyboard.push([{ text: 'Back to Menu', callback_data: 'back_to_start' }]);
       bot.sendMessage(chatId, 'Anime Sources:', { reply_markup: { inline_keyboard: keyboard } });
     } else if (data === 'cartoon_sources' || data === 'movie_series_sources') {
       bot.sendMessage(chatId, 'This feature is not yet implemented.');
+    } else if (data === 'back_to_start') {
+      const keyboardOptions = [
+        [{ text: '📥 Scrape Torrents from 1337x', callback_data: 'scrape_1337x' }],
+        [{ text: '📺 Scrape Anime from wcofun.net', callback_data: 'scrape_wcofun' }],
+        [{ text: '📇 AnimePahe Index', callback_data: 'animepahe_index' }],
+        [{ text: '🏴‍☠️ Anime Sources', callback_data: 'anime_sources' }],
+        [{ text: '🏴‍☠️ Cartoon Sources', callback_data: 'cartoon_sources' }],
+        [{ text: '🏴‍☠️ Movie/Series Sources', callback_data: 'movie_series_sources' }],
+      ];
+      bot.sendMessage(chatId, 'Choose an option to scrape or explore sources:', {
+        reply_markup: { inline_keyboard: keyboardOptions },
+      });
     }
 
-    // Handle anime selection for wcofun.net
+    // Handle AnimePahe index letter selection
+    else if (data.startsWith('index_')) {
+      const letter = data.split('_')[1];
+      const animeList = await scrapeAnimePaheIndex(letter);
+      if (animeList.length > 0) {
+        const keyboard = animeList.map(anime => [{ text: anime.title, callback_data: `animepahe_${anime.id}` }]);
+        keyboard.push([{ text: 'Back to Letters', callback_data: 'animepahe_index' }]);
+        bot.sendMessage(chatId, `Anime starting with ${letter} on AnimePahe:`, {
+          reply_markup: { inline_keyboard: keyboard },
+        });
+      } else {
+        bot.sendMessage(chatId, `No anime found for letter ${letter} on AnimePahe.`, {
+          reply_markup: { inline_keyboard: [[{ text: 'Back to Letters', callback_data: 'animepahe_index' }]] },
+        });
+      }
+    }
+
+    // Handle AnimePahe anime selection
+    else if (data.startsWith('animepahe_')) {
+      const animeId = data.split('_')[1];
+      const animeDetails = await scrapeAnimePaheDetails(animeId);
+      if (animeDetails) {
+        userSelections[userId] = { source: 'AnimePahe', title: animeDetails.title };
+        let message = `<b>📺 ${animeDetails.title}</b>\n` +
+                      `<b>Stream on AnimePahe:</b> <a href="${animeDetails.link}">Watch Now</a>`;
+        const keyboard = [[{ text: 'View Episodes', callback_data: `view_episodes_AnimePahe_${animeDetails.title}` }]];
+        bot.sendMessage(chatId, message, { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
+      } else {
+        bot.sendMessage(chatId, 'Sorry, I couldn’t fetch details for this anime on AnimePahe.');
+      }
+    }
+
+    // Handle wcofun.net anime selection
     else if (data.startsWith('tv_') && data.endsWith('_wcofun')) {
       const [type, id] = data.split('_');
       const media = await getMediaDetails(type, id);
@@ -201,6 +239,44 @@ bot.on('callback_query', async (callbackQuery) => {
   }
 });
 
+// Handle manual search replies
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const text = msg.text;
+
+  if (text && text.startsWith('/')) return;
+
+  if (msg.reply_to_message && msg.reply_to_message.text.includes('Enter the')) {
+    try {
+      if (!text || text.trim() === '') {
+        bot.sendMessage(chatId, 'Please provide a valid search term!');
+        return;
+      }
+
+      if (msg.reply_to_message.text.includes('1337x')) {
+        const torrents = await scrape1337x(text);
+        const keyboard = torrents.slice(0, 5).map(t => [{ text: t.name, url: t.href }]);
+        bot.sendMessage(chatId, torrents.length > 0 ? 'Top torrents:' : 'No torrents found.', {
+          reply_markup: { inline_keyboard: keyboard },
+        });
+      } else if (msg.reply_to_message.text.includes('wcofun.net')) {
+        const results = await searchMedia(text, 'tv');
+        cache['search_' + chatId] = results;
+        if (results.length > 0) {
+          const keyboard = results.slice(0, 5).map(r => [{ text: r.data.name, callback_data: `tv_${r.data.id}_wcofun` }]);
+          bot.sendMessage(chatId, 'Search results:', { reply_markup: { inline_keyboard: keyboard } });
+        } else {
+          bot.sendMessage(chatId, 'No anime found.');
+        }
+      }
+    } catch (error) {
+      console.error('Search handler error:', error);
+      bot.sendMessage(chatId, 'Something went wrong while searching.');
+    }
+  }
+});
+
 // **Helper Functions**
 
 // Send WCOFun details
@@ -268,31 +344,94 @@ async function scrapeWCOFunEpisodes(title) {
   }
 }
 
-// Scrape alternative source (placeholder)
-async function scrapeAlternativeSource(source, query) {
-  // Placeholder: Simulates scraping; replace with actual logic per source
+// Scrape AnimePahe index by letter
+async function scrapeAnimePaheIndex(letter) {
   try {
-    // Example: Construct a hypothetical search URL and parse results
-    return { link: `${source.baseUrl}/anime/${query.toLowerCase().replace(' ', '-')}` };
+    const url = `${BASE_URL_ANIMEPAHE}/anime`;
+    const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 5000 });
+    const $ = cheerio.load(response.data);
+    const animeList = [];
+    
+    $(`.row.anime-letter-${letter.toLowerCase()} .col-md-6`).each((_, el) => {
+      const title = $(el).find('.title').text().trim();
+      const href = $(el).find('a').attr('href');
+      if (title && href) {
+        const id = href.split('/').pop(); // Extract anime ID from URL
+        animeList.push({ title, id });
+      }
+    });
+    
+    return animeList;
   } catch (error) {
-    console.error(`Error scraping ${source.name}:`, error.message);
+    console.error(`AnimePahe index scrape error for ${letter}:`, error.message);
+    return [];
+  }
+}
+
+// Scrape AnimePahe anime details
+async function scrapeAnimePaheDetails(animeId) {
+  try {
+    const url = `${BASE_URL_ANIMEPAHE}/anime/${animeId}`;
+    const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 5000 });
+    const $ = cheerio.load(response.data);
+    const title = $('.title-wrapper h1').text().trim();
+    return title ? { title, link: url } : null;
+  } catch (error) {
+    console.error('AnimePahe details scrape error:', error.message);
     return null;
   }
 }
 
-// Get episodes from alternative source (placeholder)
+// Get episodes from alternative source (specific for AnimePahe)
 async function getEpisodesFromSource(source, title) {
-  // Placeholder: Simulates episode retrieval; replace with actual logic per source
-  try {
-    // Simulate 12 episodes as an example
-    return Array.from({ length: 12 }, (_, i) => ({
-      title: `Episode ${i + 1}`,
-      link: `${source.baseUrl}/anime/${title.toLowerCase().replace(' ', '-')}/episode-${i + 1}`,
-    }));
-  } catch (error) {
-    console.error(`Error getting episodes from ${source.name}:`, error.message);
-    return [];
+  if (source.name === 'AnimePahe') {
+    try {
+      const apiResponse = await axios.get(`${BASE_URL_ANIMEPAHE}/api?m=search&q=${encodeURIComponent(title)}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 5000,
+      });
+      const anime = apiResponse.data.data.find(a => a.title.toLowerCase() === title.toLowerCase());
+      if (!anime) return [];
+      
+      const animeId = anime.id;
+      const episodeResponse = await axios.get(`${BASE_URL_ANIMEPAHE}/api?m=release&id=${animeId}&sort=episode_asc`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 5000,
+      });
+      const episodes = episodeResponse.data.data.map(ep => ({
+        title: `Episode ${ep.episode}`,
+        link: `${BASE_URL_ANIMEPAHE}/play/${animeId}/${ep.session}`,
+      }));
+      return episodes;
+    } catch (error) {
+      console.error('AnimePahe episodes scrape error:', error.message);
+      return [];
+    }
   }
+  // Placeholder for other sources
+  return Array.from({ length: 12 }, (_, i) => ({
+    title: `Episode ${i + 1}`,
+    link: `${source.baseUrl}/anime/${title.toLowerCase().replace(' ', '-')}/episode-${i + 1}`,
+  }));
+}
+
+// Scrape alternative source (specific for AnimePahe)
+async function scrapeAlternativeSource(source, query) {
+  if (source.name === 'AnimePahe') {
+    try {
+      const apiResponse = await axios.get(`${BASE_URL_ANIMEPAHE}/api?m=search&q=${encodeURIComponent(query)}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 5000,
+      });
+      const anime = apiResponse.data.data[0];
+      return anime ? { link: `${BASE_URL_ANIMEPAHE}/anime/${anime.id}` } : null;
+    } catch (error) {
+      console.error(`AnimePahe alternative scrape error:`, error.message);
+      return null;
+    }
+  }
+  // Placeholder for other sources
+  return { link: `${source.baseUrl}/anime/${query.toLowerCase().replace(' ', '-')}` };
 }
 
 // Scrape 1337x torrents
@@ -337,5 +476,10 @@ async function getMediaDetails(type, id) {
     return null;
   }
 }
+
+// Error handling for polling errors
+bot.on('polling_error', (error) => {
+  console.error('Polling error:', error);
+});
 
 console.log('Bot is running...');
