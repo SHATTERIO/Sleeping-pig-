@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 
 // API Keys and Configuration
 const TELEGRAM_TOKEN = '7741465512:AAGzBMSPa5McuO12TgLkxH-HWfbFRTbkAWM'; // Replace with your Telegram bot token
@@ -361,21 +362,47 @@ async function scrapeWCOFunEpisodes(title) {
   }
 }
 
-// Scrape the full AnimePahe index from https://animepahe.ru/anime
+// Scrape the full AnimePahe index from https://animepahe.ru/anime using Puppeteer
 async function scrapeAnimePaheFullIndex() {
   try {
-    const url = `${BASE_URL_ANIMEPAHE}/anime`;
-    const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 5000 });
-    const $ = cheerio.load(response.data);
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+    const page = await browser.newPage();
+
+    // Set browser-like headers
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://animepahe.ru/',
+    });
+
+    // Navigate and wait for page to fully load including DDoS-Guard challenge
+    await page.goto(`${BASE_URL_ANIMEPAHE}/anime`, {
+      waitUntil: 'networkidle2',
+      timeout: 60000,
+    });
+
+    // Wait for JavaScript challenge to resolve
+    await page.waitForTimeout(5000);
+
+    // Get page content
+    const content = await page.content();
+    await browser.close();
+
+    // Parse with Cheerio
+    const $ = cheerio.load(content);
     const index = {};
 
     for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
       const animeList = [];
-      $(`div[id="${letter}"] a`).each((_, el) => {
+      $(`div[id="${letter}"] a`).each((_, el) => { // Adjust selector based on actual HTML
         const title = $(el).text().trim();
         const href = $(el).attr('href');
         if (title && href && href.startsWith('/anime/')) {
-          const id = href.split('/')[2]; // Assuming URL format is /anime/<id>
+          const id = href.split('/')[2];
           animeList.push({ title, id });
         }
       });
