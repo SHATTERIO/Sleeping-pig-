@@ -3,7 +3,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 // API Keys and Configuration
-const TELEGRAM_TOKEN = 'YOUR_TELEGRAM_TOKEN'; // Replace with your Telegram bot token
+const TELEGRAM_TOKEN = '8167202870:AAEXiIef5rpPSGExtkC8D1F3NZx_bcy3NT4'; // Replace with your Telegram bot token
 const BASE_URL_ANIMEPAHE = 'https://animepahe.ru';
 
 // Initialize bot
