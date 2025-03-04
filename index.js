@@ -149,6 +149,26 @@ bot.on('callback_query', async (callbackQuery) => {
         reply_markup: { force_reply: true },
       });
     }
+    // Handle "View Episodes" button
+    else if (data.startsWith('view_episodes_')) {
+      const [_, type, id] = data.split('_');
+      const media = await getMediaDetails(type, id);
+      if (media) {
+        const animeData = await scrapeWCOFun(media.name);
+        if (animeData && animeData.episodes && animeData.episodes.length > 0) {
+          const episodeButtons = animeData.episodes.map((ep, index) => [
+            { text: `Episode ${index + 1}`, url: ep.link },
+          ]);
+          bot.sendMessage(chatId, `Episodes for ${media.name}:`, {
+            reply_markup: { inline_keyboard: episodeButtons },
+          });
+        } else {
+          bot.sendMessage(chatId, `No episodes found for "${media.name}" on wcofun.net.`);
+        }
+      } else {
+        bot.sendMessage(chatId, 'Sorry, I couldn’t fetch episode details.');
+      }
+    }
     // Handle scraping selections
     else {
       const [type, id, source] = data.split('_');
@@ -364,7 +384,7 @@ async function scrapeWCOFun(query) {
     });
     const $$ = cheerio.load(animePageResponse.data);
     const episodeLinks = [];
-    
+
     $$('.cat-eps a').each((_, element) => {
       const epTitle = $$(element).text().trim();
       const epLink = $$(element).attr('href');
@@ -376,7 +396,7 @@ async function scrapeWCOFun(query) {
       }
     });
 
-    return { ...animePage, episodes: episodeLinks.slice(0, 10) }; // Limit to 10 episodes for brevity
+    return { ...animePage, episodes: episodeLinks };
   } catch (error) {
     console.error('wcofun.net scraping error:', error.message);
     return null;
@@ -423,7 +443,7 @@ async function send1337xDetails(chatId, media, type) {
   bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
 }
 
-// Send wcofun.net details with torrent links and episode buttons
+// Send wcofun.net details with torrent links and "View Episodes" button
 async function sendWCOFunDetails(chatId, media, type) {
   const title = media.name;
   const releaseDate = media.first_air_date;
@@ -451,24 +471,20 @@ async function sendWCOFunDetails(chatId, media, type) {
   if (animeData) {
     message += `\n<b>Streaming:</b>\n<a href="${animeData.link}">Watch on wcofun.net</a>\n`;
 
-    if (animeData.episodes && animeData.episodes.length > 0) {
-      message += `\n<b>Episodes:</b>\n`;
-      const episodeButtons = animeData.episodes.map((ep, index) => [
-        { text: `${ep.title}`, url: ep.link },
-      ]);
-      bot.sendMessage(chatId, message, {
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: [[{ text: 'Show Episodes', callback_data: 'noop' }]] },
-      });
-      bot.sendMessage(chatId, 'Select an episode:', {
-        reply_markup: { inline_keyboard: episodeButtons },
-      });
-    } else {
-      message += `\nNo episodes found for "${title}" on wcofun.net.`;
-      bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
-    }
+    const episodeCount = animeData.episodes ? animeData.episodes.length : 0;
+    message += `\nEpisodes Available: ${episodeCount}`;
+
+    // Add "View Episodes" button with context
+    const keyboard = episodeCount > 0 ? [
+      [{ text: 'View Episodes', callback_data: `view_episodes_${type}_${media.id}` }],
+    ] : [];
+
+    bot.sendMessage(chatId, message, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+    });
   } else {
-    message += `\nSorry, no streaming link found for "${title}" on wcofun.net.`;
+    message += `\nSorry, no streaming link or episodes found for "${title}" on wcofun.net.`;
     bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
   }
 }
