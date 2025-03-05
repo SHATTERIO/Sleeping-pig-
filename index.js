@@ -1,7 +1,9 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const fs = require('fs');
+const { execSync } = require('child_process');
 
 // API Keys and Configuration
 const TELEGRAM_TOKEN = '7741465512:AAGzBMSPa5McuO12TgLkxH-HWfbFRTbkAWM'; // Replace with your Telegram bot token
@@ -64,8 +66,10 @@ bot.on('callback_query', async (callbackQuery) => {
     } else if (data === 'animepahe_index') {
       if (!indexCache || Date.now() - indexCacheTimestamp > CACHE_DURATION) {
         try {
+          bot.sendMessage(chatId, 'Loading AnimePahe index, please wait...');
           indexCache = await scrapeAnimePaheFullIndex();
           indexCacheTimestamp = Date.now();
+          bot.sendMessage(chatId, 'AnimePahe index loaded successfully.');
         } catch (error) {
           console.error('Error loading AnimePahe index:', error);
           bot.sendMessage(chatId, 'Failed to load AnimePahe index. Please try again later.');
@@ -364,9 +368,27 @@ async function scrapeWCOFunEpisodes(title) {
 
 // Scrape the full AnimePahe index from https://animepahe.ru/anime using Puppeteer
 async function scrapeAnimePaheFullIndex() {
+  const chromePath = '/app/.apt/usr/bin/google-chrome';
+
+  // Debugging: Check if Chrome exists
+  if (!fs.existsSync(chromePath)) {
+    console.error(`Chrome executable not found at ${chromePath}`);
+    throw new Error(`Chrome not found at ${chromePath}`);
+  }
+  console.log(`Chrome found at ${chromePath}`);
+
+  // Log Chrome version
+  try {
+    const chromeVersion = execSync(`${chromePath} --version`).toString().trim();
+    console.log(`Chrome version: ${chromeVersion}`);
+  } catch (e) {
+    console.error('Failed to get Chrome version:', e.message);
+  }
+
   try {
     const browser = await puppeteer.launch({
       headless: true,
+      executablePath: chromePath,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
     const page = await browser.newPage();
@@ -398,7 +420,7 @@ async function scrapeAnimePaheFullIndex() {
 
     for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
       const animeList = [];
-      $(`div[id="${letter}"] a`).each((_, el) => { // Adjust selector based on actual HTML
+      $(`.row.anime-letter-${letter.toLowerCase()} a`).each((_, el) => {
         const title = $(el).text().trim();
         const href = $(el).attr('href');
         if (title && href && href.startsWith('/anime/')) {
