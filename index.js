@@ -2,6 +2,8 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 require('dotenv').config();
 
+// Rest of your bot code remains the same...
+
 // Bot configuration
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '7973795672:AAF3nDQtzUBHOJZ-rmnKUzDJ11Ar5lOgbRQ';
 const TMDB_API_KEY = process.env.TMDB_API_KEY || 'ecaa26b48cd983adcac1b1087aebee94';
