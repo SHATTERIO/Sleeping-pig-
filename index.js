@@ -5,7 +5,7 @@ require('dotenv').config();
 // Rest of your bot code remains the same...
 
 // Bot configuration
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '7973795672:AAF3nDQtzUBHOJZ-rmnKUzDJ11Ar5lOgbRQ';
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '7741465512:AAFyg3go2dnTSA323kDvJPPcgDrrcIT3KKc';
 const TMDB_API_KEY = process.env.TMDB_API_KEY || 'ecaa26b48cd983adcac1b1087aebee94';
 
 // Anime sources
