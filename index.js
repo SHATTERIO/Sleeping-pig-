@@ -4,12 +4,6 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 
 // API Keys and Configuration
-const TELEGRAM_TOKEN = '7741465512:AAFyg3go2dnTSA323kDvJPPcgDrrcIT3KKc';
-const TMDB_API_KEY = 'ecaa26b48cd983adcac1b1087aebee94';
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
-const BASE_URL_1337X = 'https://1337x.to';
-const BACKUP_CHANNEL_ID = '-1002253889296'; // Your backup channel ID
-const CACHE_FILE = 'cache.json';
 
 // Initialize bot
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
